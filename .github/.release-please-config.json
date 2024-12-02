@@ -1,0 +1,8 @@
+{
+  "packages": {
+  },
+  "separate-pull-requests": false,
+  "group-pull-request-title-pattern": "chore: release modules",
+  "tag-separator": "-",
+  "include-v-in-tag": false
+}
