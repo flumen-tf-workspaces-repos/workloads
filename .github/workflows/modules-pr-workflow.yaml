@@ -1,0 +1,115 @@
+name: Workload Modules PR Workflow
+
+on:
+  pull_request:
+    paths:
+      - workloads/**
+
+permissions:
+  pull-requests: write
+  contents: write
+
+jobs:
+  find-changes:
+    name: Find Changed Workloads
+    runs-on: ubuntu-latest
+    outputs:
+      changed-modules: ${{ steps.get-changed-modules.outputs.result }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: tj-actions/changed-files@v39
+        id: changed-files
+        with:
+          files_ignore: ".github/workflows/**"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - id: get-changed-modules
+        env:
+          MODIFIED_FILES: ${{ steps.changed-files.outputs.all_modified_files }}
+        run: python .github/workflows/scripts/get_changed_modules.py >> $GITHUB_OUTPUT
+
+  update-configs-and-commit:
+    name: Update Configs and Commit Changes
+    needs: find-changes
+    runs-on: ubuntu-latest
+    if: ${{ needs.find-changes.outputs.changed-modules != '[]' }}
+    env:
+      CHANGED_MODULES: ${{ needs.find-changes.outputs.changed-modules }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Configure Git
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+
+      - name: Update Manifest and Config
+        run: |
+          git fetch origin
+          git checkout -B ${{ github.head_ref }} origin/${{ github.head_ref }}
+
+          python -u .github/workflows/scripts/update_manifest.py
+          python -u .github/workflows/scripts/generate_config.py
+
+          git add .github/.release-please-manifest.json .github/.release-please-config.json
+          git diff --cached --exit-code || git commit -m "chore: update release-please manifest and config" && git push origin HEAD:${{ github.head_ref }}
+
+      - name: Display Updated Contents
+        run: |
+          echo "Manifest contents after update:"
+          cat .github/.release-please-manifest.json
+          echo "Config contents after update:"
+          cat .github/.release-please-config.json
+
+  process-modules:
+    name: Process Changed Modules
+    needs: [find-changes, update-configs-and-commit]
+    if: ${{ needs.find-changes.outputs.changed-modules != '[]' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        module: ${{ fromJson(needs.find-changes.outputs.changed-modules) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Terraform and TFLint
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.2
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.52.0
+
+      - name: Update README
+        uses: terraform-docs/gh-actions@v1
+        with:
+          working-dir: ${{ matrix.module }}
+          output-file: README.md
+          output-method: inject
+          git-push: "true"
+
+      - name: Terraform Operations
+        working-directory: ${{ matrix.module }}
+        run: |
+          terraform init
+          terraform fmt -check -diff
+          terraform validate
+          tflint --format=compact
