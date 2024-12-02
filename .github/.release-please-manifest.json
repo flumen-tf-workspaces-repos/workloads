@@ -1,5 +1,5 @@
 {
-  "workloads/management/aws-organizational-unit": "0.1.0",
-  "workloads/management/aws-organization": "0.1.0",
+  "workloads/management/aws-organizational-unit": "0.2.0",
+  "workloads/management/aws-organization": "0.2.0",
   ".": "0.0.0"
 }
